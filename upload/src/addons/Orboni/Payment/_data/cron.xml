@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<cron>
+  <entry entry_id="orboniRecheck" cron_class="Orboni\Payment\Cron\Recheck" cron_method="run" active="1"><![CDATA[{"day_type":"dom","dom":[-1],"hours":[-1],"minutes":[7,22,37,52]}]]></entry>
+</cron>

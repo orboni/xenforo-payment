@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<templates>
+  <template type="admin" title="payment_profile_orboni" version_id="1000070" version_string="1.0.0"><![CDATA[<xf:formrow label="{{ phrase('orboni_webhook_address') }}"
+	explain="{{ phrase('orboni_webhook_address_explain') }}">
+	<code dir="ltr" style="user-select: all; word-break: break-all;">{$webhookUrl}</code>
+</xf:formrow>
+
+<xf:textboxrow name="options[secret_key]" value="{$profile.options.secret_key}"
+	type="password" autocomplete="new-password" spellcheck="false" dir="ltr"
+	label="{{ phrase('orboni_secret_key') }}"
+	explain="{{ phrase('orboni_secret_key_explain') }}" />
+
+<xf:textboxrow name="options[webhook_secret]" value="{$profile.options.webhook_secret}"
+	type="password" autocomplete="new-password" spellcheck="false" dir="ltr"
+	label="{{ phrase('orboni_webhook_secret') }}"
+	explain="{{ phrase('orboni_webhook_secret_explain') }}" />]]></template>
+</templates>

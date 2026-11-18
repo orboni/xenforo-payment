@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<phrases>
+  <phrase title="cron_entry.orboniRecheck" version_id="1000070" version_string="1.0.0"><![CDATA[Orboni: read back open payments]]></phrase>
+  <phrase title="orboni_below_minimum" version_id="1000070" version_string="1.0.0"><![CDATA[This purchase is below the minimum amount for a crypto payment.]]></phrase>
+  <phrase title="orboni_not_available" version_id="1000070" version_string="1.0.0"><![CDATA[Crypto payment is not available right now. Please try again in a minute or choose another payment method.]]></phrase>
+  <phrase title="orboni_secret_key" version_id="1000070" version_string="1.0.0"><![CDATA[Secret key]]></phrase>
+  <phrase title="orboni_secret_key_explain" version_id="1000070" version_string="1.0.0"><![CDATA[From Developers → API keys in the Orboni dashboard: a test key (sk_test_…) first, to try it with Simulate payment, then the live one (sk_live_…). The key decides test or live; XenForo's <code>enableLivePayments</code> setting does not apply.]]></phrase>
+  <phrase title="orboni_secret_key_invalid" version_id="1000070" version_string="1.0.0"><![CDATA[Paste a secret key from Orboni: it starts with sk_live_ or sk_test_.]]></phrase>
+  <phrase title="orboni_webhook_address" version_id="1000070" version_string="1.0.0"><![CDATA[Webhook address]]></phrase>
+  <phrase title="orboni_webhook_address_explain" version_id="1000070" version_string="1.0.0"><![CDATA[In the Orboni dashboard, under Developers → Webhooks, add an endpoint at this address with every event, or at least the <code>checkout.session.*</code> ones, and paste its signing secret below.]]></phrase>
+  <phrase title="orboni_webhook_secret" version_id="1000070" version_string="1.0.0"><![CDATA[Webhook signing secret]]></phrase>
+  <phrase title="orboni_webhook_secret_explain" version_id="1000070" version_string="1.0.0"><![CDATA[The endpoint's signing secret (whsec_…). Without it the webhooks are refused, and a payment is applied only when the member comes back from the payment page, or by the cron within the hour.]]></phrase>
+  <phrase title="orboni_webhook_secret_invalid" version_id="1000070" version_string="1.0.0"><![CDATA[The webhook signing secret starts with whsec_.]]></phrase>
+</phrases>
