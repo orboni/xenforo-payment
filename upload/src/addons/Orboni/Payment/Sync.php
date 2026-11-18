@@ -10,6 +10,7 @@
 
 namespace Orboni\Payment;
 
+use Orboni\Payment\Entity\Payment;
 use XF\Payment\CallbackState;
 
 /**
@@ -42,37 +43,35 @@ class Sync
      * The session made for this purchase by this forum: its id is the one
      * kept, and it names the purchase.
      *
-     * @param  array<string, mixed>  $row
      * @param  array<string, mixed>  $session
      */
-    public static function belongs(array $row, array $session): bool
+    public static function belongs(Payment $payment, array $session): bool
     {
         $metadata = isset($session['metadata']) && is_array($session['metadata']) ? $session['metadata'] : [];
 
-        return isset($session['id']) && (string) $session['id'] === (string) $row['session_id']
-            && (isset($session['client_reference_id']) ? (string) $session['client_reference_id'] : '') === (string) $row['request_key']
-            && (isset($metadata['xenforo_request_key']) ? (string) $metadata['xenforo_request_key'] : '') === (string) $row['request_key'];
+        return isset($session['id']) && (string) $session['id'] === $payment->session_id
+            && (isset($session['client_reference_id']) ? (string) $session['client_reference_id'] : '') === $payment->request_key
+            && (isset($metadata['xenforo_request_key']) ? (string) $metadata['xenforo_request_key'] : '') === $payment->request_key;
     }
 
     /**
      * What to do: `result` one of CallbackState's PAYMENT_* or null for
-     * nothing to change, the `transaction` id to log it under, the row's new
-     * `granted`, `changes` and `state`, and a `logType` and `message` when
+     * nothing to change, the `transaction` id to log it under, the payment's
+     * new `granted`, `changes` and `state`, and a `logType` and `message` when
      * something is worth a line in the log.
      *
-     * @param  array<string, mixed>  $row
      * @param  array<string, mixed>  $session
      * @return array{result: int|null, transaction: string, granted: int, changes: int, state: string, logType: string|null, message: string}
      */
-    public static function decide(array $row, array $session, string $event = ''): array
+    public static function decide(Payment $payment, array $session, string $event = ''): array
     {
         $id = (string) $session['id'];
         $status = isset($session['status']) ? (string) $session['status'] : '';
-        $payment = isset($session['payment_status']) ? (string) $session['payment_status'] : '';
-        $state = $status.':'.$payment;
-        $paid = $status === 'complete' && $payment === 'paid';
-        $granted = (int) $row['granted'];
-        $changes = (int) $row['changes'];
+        $paymentStatus = isset($session['payment_status']) ? (string) $session['payment_status'] : '';
+        $state = $status.':'.$paymentStatus;
+        $paid = $status === 'complete' && $paymentStatus === 'paid';
+        $granted = (int) $payment->granted;
+        $changes = (int) $payment->changes;
 
         $decision = [
             'result' => null,
@@ -84,12 +83,12 @@ class Sync
             'message' => '',
         ];
 
-        if ($granted === Records::GRANTED) {
+        if ($granted === Payment::GRANTED) {
             if (! $paid) {
                 return array_merge($decision, [
                     'result' => CallbackState::PAYMENT_REVERSED,
                     'transaction' => $id.'-reversed-'.($changes + 1),
-                    'granted' => Records::TAKEN_BACK,
+                    'granted' => Payment::TAKEN_BACK,
                     'changes' => $changes + 1,
                     'message' => sprintf('Money that paid it left the chain (a reorganisation or a double spend); %s still counts as received. Taken back until Orboni shows it paid again.', self::received($session)),
                 ]);
@@ -105,34 +104,34 @@ class Sync
         }
 
         if ($paid) {
-            return $granted === Records::TAKEN_BACK
+            return $granted === Payment::TAKEN_BACK
                 ? array_merge($decision, [
                     'result' => CallbackState::PAYMENT_REINSTATED,
                     'transaction' => $id.'-reinstated-'.($changes + 1),
-                    'granted' => Records::GRANTED,
+                    'granted' => Payment::GRANTED,
                     'changes' => $changes + 1,
                     'message' => self::paidNote($session),
                 ])
                 : array_merge($decision, [
                     'result' => CallbackState::PAYMENT_RECEIVED,
-                    'granted' => Records::GRANTED,
+                    'granted' => Payment::GRANTED,
                     'message' => self::paidNote($session),
                 ]);
         }
 
-        if ($state === (string) $row['state']) {
+        if ($state === $payment->state) {
             return $decision;
         }
 
-        if ($payment === 'processing') {
+        if ($paymentStatus === 'processing') {
             return array_merge($decision, ['logType' => 'info', 'message' => 'On the chain, waiting for confirmations: applied by itself once final.']);
         }
-        if ($payment === 'partially_paid') {
+        if ($paymentStatus === 'partially_paid') {
             return $status === 'expired'
                 ? array_merge($decision, ['logType' => 'error', 'message' => sprintf('The payment page closed part paid: %s of %s arrived in your wallet. Not applied: settle it with the member (send it back, or apply the purchase by hand).', self::received($session), self::due($session))])
                 : array_merge($decision, ['logType' => 'info', 'message' => sprintf('Part paid so far: %s of %s. The payment page asks the member for the rest.', self::received($session), self::due($session))]);
         }
-        if ($payment === 'held') {
+        if ($paymentStatus === 'held') {
             return array_merge($decision, ['logType' => 'error', 'message' => sprintf('The money is in your wallet but held for your review in the Orboni dashboard (%s). Accept it there and the purchase is applied.', isset($session['review_reason']) ? (string) $session['review_reason'] : 'no reason given')]);
         }
         if ($status === 'expired') {

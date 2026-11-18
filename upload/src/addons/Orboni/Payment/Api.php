@@ -10,14 +10,16 @@
 
 namespace Orboni\Payment;
 
+use GuzzleHttp\Exception\GuzzleException;
+
 /**
  * Orboni's API, as much of it as a forum needs: make a checkout session, read
- * one back. `Authorization: Bearer sk_…`, JSON both ways, over cURL (which
- * XenForo requires).
+ * one back. `Authorization: Bearer sk_…`, JSON both ways, through XenForo's
+ * HTTP client.
  */
 class Api
 {
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.1';
 
     const SESSION_ID = '/^cs_(live|test)_[A-Za-z0-9]+$/';
 
@@ -79,15 +81,15 @@ class Api
     private function request(string $method, string $path, ?array $body = null, ?string $idempotencyKey = null): array
     {
         $headers = [
-            'Authorization: Bearer '.$this->secret,
-            'Accept: application/json',
-            'User-Agent: orboni-xenforo/'.self::VERSION.'; XenForo/'.\XF::$version,
+            'Authorization' => 'Bearer '.$this->secret,
+            'Accept' => 'application/json',
+            'User-Agent' => 'orboni-xenforo/'.self::VERSION.'; XenForo/'.\XF::$version,
         ];
         if ($body !== null) {
-            $headers[] = 'Content-Type: application/json';
+            $headers['Content-Type'] = 'application/json';
         }
         if ($idempotencyKey !== null) {
-            $headers[] = 'Idempotency-Key: '.$idempotencyKey;
+            $headers['Idempotency-Key'] = $idempotencyKey;
         }
         // A GET, or a POST under an idempotency key, can be sent twice safely.
         $retryable = $method === 'GET' || $idempotencyKey !== null;
@@ -117,37 +119,37 @@ class Api
     }
 
     /**
-     * @param  list<string>  $headers
+     * One request through XenForo's HTTP client: its CA bundle, its proxy
+     * settings and other add-ons' options (`http_client_options`) apply.
+     *
+     * @param  array<string, string>  $headers
      * @return array{status: int, headers: array<string, string>, body: string, error: string}
      */
     private function send(string $method, string $url, array $headers, ?string $body = null): array
     {
-        $received = [];
-        $curl = curl_init($url);
-        curl_setopt_array($curl, [
-            CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_CONNECTTIMEOUT => 10,
-            CURLOPT_TIMEOUT => 20,
-            CURLOPT_HEADERFUNCTION => static function ($curl, $line) use (&$received) {
-                $kv = explode(':', $line, 2);
-                if (count($kv) === 2) {
-                    $received[strtolower(trim($kv[0]))] = trim($kv[1]);
-                }
-
-                return strlen($line);
-            },
-        ]);
+        $options = [
+            'headers' => $headers,
+            'http_errors' => false,
+            'allow_redirects' => false,
+            'connect_timeout' => 10,
+            'timeout' => 20,
+        ];
         if ($body !== null) {
-            curl_setopt($curl, CURLOPT_POSTFIELDS, $body);
+            $options['body'] = $body;
         }
-        $text = curl_exec($curl);
-        $error = curl_error($curl);
-        $status = $text === false ? 0 : (int) curl_getinfo($curl, CURLINFO_RESPONSE_CODE);
 
-        return ['status' => $status, 'headers' => $received, 'body' => is_string($text) ? $text : '', 'error' => $error];
+        try {
+            $response = \XF::app()->http()->client()->request($method, $url, $options);
+        } catch (GuzzleException $e) {
+            return ['status' => 0, 'headers' => [], 'body' => '', 'error' => $e->getMessage()];
+        }
+
+        $received = [];
+        foreach ($response->getHeaders() as $name => $values) {
+            $received[strtolower((string) $name)] = implode(', ', $values);
+        }
+
+        return ['status' => $response->getStatusCode(), 'headers' => $received, 'body' => (string) $response->getBody(), 'error' => ''];
     }
 
     /**

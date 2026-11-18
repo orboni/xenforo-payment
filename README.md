@@ -17,7 +17,7 @@ The full guide, with what happens to an upgrade for every payment state and ever
 
 ## Requirements
 
-XenForo 2.3 or later; PHP 7.2 or later, with cURL (both as XenForo 2.3 itself requires).
+XenForo 2.3 or later; PHP 7.2 or later (as XenForo 2.3 itself requires). The add-on calls Orboni's API through XenForo's own HTTP client, so the forum's proxy and certificate settings apply.
 
 ## Pricing
 

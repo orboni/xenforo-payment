@@ -11,7 +11,7 @@
 namespace Orboni\Payment\Cron;
 
 use Orboni\Payment\Payment\Orboni;
-use Orboni\Payment\Records;
+use Orboni\Payment\Repository\PaymentRepository;
 use XF\Entity\PaymentProvider;
 
 /**
@@ -35,9 +35,12 @@ class Recheck
             return;
         }
 
-        foreach (Records::open(self::RECHECK_SECONDS, self::BATCH) as $row) {
-            Records::update((string) $row['request_key'], ['checked_date' => \XF::$time]);
-            $handler->recheck($row);
+        /** @var PaymentRepository $payments */
+        $payments = \XF::repository(PaymentRepository::class);
+        foreach ($payments->findPaymentsToRecheck(self::RECHECK_SECONDS)->limit(self::BATCH)->fetch() as $payment) {
+            $payment->checked_date = \XF::$time;
+            $payment->save();
+            $handler->recheck($payment);
         }
     }
 }

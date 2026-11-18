@@ -10,8 +10,8 @@
 
 namespace Orboni\Payment\Pub\Controller;
 
+use Orboni\Payment\Entity\Payment;
 use Orboni\Payment\Payment\Orboni;
-use Orboni\Payment\Records;
 use XF\Entity\PaymentProvider;
 use XF\Pub\Controller\AbstractController;
 
@@ -27,18 +27,18 @@ class PaymentReturn extends AbstractController
 {
     public function actionReturn()
     {
-        $row = Records::get($this->filter('request_key', 'str'));
-        if ($row === null) {
+        $payment = $this->em()->find(Payment::class, $this->filter('request_key', 'str'));
+        if (! $payment) {
             return $this->redirect($this->buildLink('index'));
         }
 
         $provider = $this->em()->find(PaymentProvider::class, Orboni::PROVIDER_ID);
         $handler = $provider ? $provider->handler : null;
-        if ($handler instanceof Orboni && (int) $row['granted'] !== Records::GRANTED) {
-            $handler->recheck($row);
+        if ($handler instanceof Orboni && $payment->granted !== Payment::GRANTED) {
+            $handler->recheck($payment);
         }
 
-        $back = (string) $row['return_url'];
+        $back = $payment->return_url;
 
         return $this->redirect($back !== '' ? $back : $this->buildLink('index'));
     }

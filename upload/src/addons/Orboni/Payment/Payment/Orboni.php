@@ -14,8 +14,9 @@ use Orboni\Payment\Api;
 use Orboni\Payment\ApiException;
 use Orboni\Payment\Cron\Recheck;
 use Orboni\Payment\Currencies;
+use Orboni\Payment\Entity\Payment;
 use Orboni\Payment\Pub\Controller\PaymentReturn;
-use Orboni\Payment\Records;
+use Orboni\Payment\Repository\PaymentRepository;
 use Orboni\Payment\Signature;
 use Orboni\Payment\Sync;
 use XF\Entity\PaymentProfile;
@@ -25,7 +26,7 @@ use XF\Mvc\Controller;
 use XF\Payment\AbstractProvider;
 use XF\Payment\CallbackState;
 use XF\Purchasable\Purchase;
-use XF\Repository\PaymentRepository;
+use XF\Repository\PaymentRepository as XfPaymentRepository;
 
 /**
  * Orboni as one of XenForo's payment providers: a member choosing it is sent
@@ -118,16 +119,24 @@ class Orboni extends AbstractProvider
             return $controller->error(\XF::phrase('orboni_not_available'));
         }
 
-        Records::insert([
-            'request_key' => $requestKey,
-            'session_id' => $session['id'],
-            'payment_profile_id' => (int) $purchaseRequest->payment_profile_id,
-            'return_url' => (string) $purchase->returnUrl,
-            'created_date' => \XF::$time,
-            'expires_date' => (isset($session['expires_at']) ? (int) $session['expires_at'] : 0) ?: \XF::$time + 3600,
-            // The cron's first read ten minutes from now (see Records::open()).
-            'checked_date' => \XF::$time - Recheck::RECHECK_SECONDS + 600,
-        ]);
+        $expires = (isset($session['expires_at']) ? (int) $session['expires_at'] : 0) ?: \XF::$time + 3600;
+        $payment = \XF::em()->find(Payment::class, $requestKey);
+        if ($payment) {
+            $payment->bulkSet(['session_id' => $session['id'], 'expires_date' => $expires]);
+        } else {
+            $payment = \XF::em()->create(Payment::class);
+            $payment->bulkSet([
+                'request_key' => $requestKey,
+                'session_id' => $session['id'],
+                'payment_profile_id' => (int) $purchaseRequest->payment_profile_id,
+                'return_url' => (string) $purchase->returnUrl,
+                'created_date' => \XF::$time,
+                'expires_date' => $expires,
+                // The cron's first read ten minutes from now (see PaymentRepository::findPaymentsToRecheck()).
+                'checked_date' => \XF::$time - Recheck::RECHECK_SECONDS + 600,
+            ]);
+        }
+        $payment->save();
 
         return $controller->redirect($session['url']);
     }
@@ -139,9 +148,9 @@ class Orboni extends AbstractProvider
      */
     public function processPayment(Controller $controller, PurchaseRequest $purchaseRequest, PaymentProfile $paymentProfile, Purchase $purchase)
     {
-        $row = Records::get((string) $purchaseRequest->request_key);
-        if ($row !== null) {
-            $this->recheck($row, $purchaseRequest, $paymentProfile);
+        $payment = \XF::em()->find(Payment::class, (string) $purchaseRequest->request_key);
+        if ($payment) {
+            $this->recheck($payment, $purchaseRequest, $paymentProfile);
         }
 
         return $controller->redirect($purchase->returnUrl);
@@ -150,16 +159,14 @@ class Orboni extends AbstractProvider
     /**
      * One purchase read back and settled, outside a webhook: the member's
      * return and the cron.
-     *
-     * @param  array<string, mixed>  $row
      */
-    public function recheck(array $row, ?PurchaseRequest $purchaseRequest = null, ?PaymentProfile $paymentProfile = null)
+    public function recheck(Payment $payment, ?PurchaseRequest $purchaseRequest = null, ?PaymentProfile $paymentProfile = null)
     {
         $state = new CallbackState;
         if ($purchaseRequest !== null) {
             $state->purchaseRequest = $purchaseRequest;
         } else {
-            $state->requestKey = (string) $row['request_key'];
+            $state->requestKey = $payment->request_key;
         }
         if ($paymentProfile !== null) {
             $state->paymentProfile = $paymentProfile;
@@ -172,9 +179,9 @@ class Orboni extends AbstractProvider
         }
 
         try {
-            $state->session = (new Api(isset($profile->options['secret_key']) ? (string) $profile->options['secret_key'] : ''))->getSession((string) $row['session_id']);
+            $state->session = (new Api(isset($profile->options['secret_key']) ? (string) $profile->options['secret_key'] : ''))->getSession($payment->session_id);
         } catch (ApiException $e) {
-            $this->logError((string) $row['request_key'], sprintf('Could not read session %s back: %s', $row['session_id'], $e->getMessage()));
+            $this->logError($payment->request_key, sprintf('Could not read session %s back: %s', $payment->session_id, $e->getMessage()));
 
             return;
         }
@@ -193,7 +200,7 @@ class Orboni extends AbstractProvider
         if ($state->logType) {
             $this->log($state);
         }
-        Records::unlock((string) $row['request_key']);
+        $this->payments()->unlock($payment->request_key);
     }
 
     public function setupCallback(Request $request)
@@ -240,8 +247,8 @@ class Orboni extends AbstractProvider
 
             return false;
         }
-        $row = Records::get($requestKey);
-        if ($row === null || (string) $row['session_id'] !== $state->sessionId) {
+        $payment = \XF::em()->find(Payment::class, $requestKey);
+        if (! $payment || $payment->session_id !== $state->sessionId) {
             $state->logMessage = 'Ignored: no purchase of this forum has this session.';
 
             return false;
@@ -299,18 +306,19 @@ class Orboni extends AbstractProvider
      */
     public function validateTransaction(CallbackState $state)
     {
-        $decision = Sync::decide($state->row, $state->session, (string) $state->eventType);
+        $decision = Sync::decide($state->payment, $state->session, (string) $state->eventType);
         $state->decision = $decision;
         $state->transactionId = $decision['transaction'];
         $state->paymentResult = $decision['result'];
         $state->note = $decision['message'];
 
         if ($decision['result'] === null) {
-            Records::update((string) $state->requestKey, ['state' => $decision['state']]);
+            $state->payment->state = $decision['state'];
+            $state->payment->save();
             $state->logType = $decision['logType'];
             $state->logMessage = $decision['message'] !== '' ? $decision['message'] : 'Nothing to change.';
             $state->httpCode = 200;
-            Records::unlock((string) $state->requestKey);
+            $this->payments()->unlock((string) $state->requestKey);
 
             return false;
         }
@@ -362,22 +370,23 @@ class Orboni extends AbstractProvider
     }
 
     /**
-     * XenForo grants or takes back the purchase; the row records it only
+     * XenForo grants or takes back the purchase; the payment records it only
      * after, so a purchase XenForo failed on is tried again.
      */
     public function completeTransaction(CallbackState $state)
     {
         parent::completeTransaction($state);
 
-        Records::update((string) $state->requestKey, [
+        $state->payment->bulkSet([
             'granted' => $state->decision['granted'],
             'changes' => $state->decision['changes'],
             'state' => $state->decision['state'],
         ]);
+        $state->payment->save();
         if ($state->note !== '' && $state->logType) {
             $state->logMessage = trim($state->logMessage.' '.$state->note);
         }
-        Records::unlock((string) $state->requestKey);
+        $this->payments()->unlock((string) $state->requestKey);
     }
 
     public function prepareLogData(CallbackState $state)
@@ -404,35 +413,37 @@ class Orboni extends AbstractProvider
     {
         parent::log($state);
         if ($state->requestKey) {
-            Records::unlock((string) $state->requestKey);
+            $this->payments()->unlock((string) $state->requestKey);
         }
     }
 
     /**
-     * The purchase's lock, and its row read under it, for a session that is
-     * this purchase's. False, with the reason set, when either fails.
+     * The purchase's lock, and the purchase read fresh under it, for a session
+     * that is this purchase's. False, with the reason set, when either fails.
      */
     private function claim(CallbackState $state): bool
     {
         $requestKey = (string) $state->requestKey;
-        if (! Records::lock($requestKey)) {
+        $payments = $this->payments();
+        if (! $payments->lock($requestKey)) {
             $state->logMessage = 'Busy: another request is settling this purchase.';
             $state->httpCode = 503;
 
             return false;
         }
 
-        $row = Records::get($requestKey);
-        if ($row === null || ! Sync::belongs($row, $state->session)) {
-            Records::unlock($requestKey);
+        $payment = $payments->getFreshPayment($requestKey);
+        if (! $payment || ! Sync::belongs($payment, $state->session)) {
+            $payments->unlock($requestKey);
             $state->logType = 'error';
             $state->logMessage = 'The session read back is not this purchase\'s; left alone.';
             $state->httpCode = 200;
 
             return false;
         }
-        $state->row = $row;
-        Records::update($requestKey, ['checked_date' => \XF::$time]);
+        $payment->checked_date = \XF::$time;
+        $payment->save();
+        $state->payment = $payment;
 
         return true;
     }
@@ -441,10 +452,16 @@ class Orboni extends AbstractProvider
     {
         if (! $valid) {
             $state->httpCode = 200;
-            Records::unlock((string) $state->requestKey);
+            $this->payments()->unlock((string) $state->requestKey);
         }
 
         return $valid;
+    }
+
+    /** @return PaymentRepository */
+    private function payments()
+    {
+        return \XF::repository(PaymentRepository::class);
     }
 
     /**
@@ -483,7 +500,7 @@ class Orboni extends AbstractProvider
     /** A line in Logs → Payment provider log. */
     private function logError(string $requestKey, string $message)
     {
-        \XF::repository(PaymentRepository::class)->logCallback($requestKey, $this->providerId, null, 'error', $message, []);
+        \XF::repository(XfPaymentRepository::class)->logCallback($requestKey, $this->providerId, null, 'error', $message, []);
     }
 
     /** Text XenForo may keep escaped for HTML, as plain text. */

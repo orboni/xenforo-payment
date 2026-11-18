@@ -16,6 +16,7 @@ use XF\AddOn\StepRunnerInstallTrait;
 use XF\AddOn\StepRunnerUninstallTrait;
 use XF\AddOn\StepRunnerUpgradeTrait;
 use XF\Db\Schema\Create;
+use XF\Entity\PaymentProvider;
 
 /**
  * Installs the payment provider "orboni" (Setup → Payment profiles → Add
@@ -30,7 +31,7 @@ class Setup extends AbstractSetup
 
     public function installStep1()
     {
-        $this->schemaManager()->createTable(Records::TABLE, function (Create $table) {
+        $this->schemaManager()->createTable('xf_orboni_payment', function (Create $table) {
             $table->addColumn('request_key', 'varbinary', 32);
             $table->addColumn('session_id', 'varbinary', 100);
             $table->addColumn('payment_profile_id', 'int')->unsigned();
@@ -49,20 +50,26 @@ class Setup extends AbstractSetup
 
     public function installStep2()
     {
-        $this->db()->insert('xf_payment_provider', [
-            'provider_id' => Orboni::PROVIDER_ID,
-            'provider_class' => 'Orboni\Payment:Orboni',
-            'addon_id' => 'Orboni/Payment',
-        ], false, 'provider_class = VALUES(provider_class), addon_id = VALUES(addon_id)');
+        $provider = \XF::em()->find(PaymentProvider::class, Orboni::PROVIDER_ID);
+        if (! $provider) {
+            $provider = \XF::em()->create(PaymentProvider::class);
+            $provider->provider_id = Orboni::PROVIDER_ID;
+        }
+        $provider->provider_class = 'Orboni\Payment:Orboni';
+        $provider->addon_id = 'Orboni/Payment';
+        $provider->save();
     }
 
     public function uninstallStep1()
     {
-        $this->db()->delete('xf_payment_provider', 'provider_id = ?', Orboni::PROVIDER_ID);
+        $provider = \XF::em()->find(PaymentProvider::class, Orboni::PROVIDER_ID);
+        if ($provider) {
+            $provider->delete();
+        }
     }
 
     public function uninstallStep2()
     {
-        $this->schemaManager()->dropTable(Records::TABLE);
+        $this->schemaManager()->dropTable('xf_orboni_payment');
     }
 }
